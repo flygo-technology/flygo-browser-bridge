@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Flygo Browser Bridge",
-  "version": "0.1.0",
-  "description": "Let your own Flygo AI agents drive this browser (Playwright MCP style), through Flygo Chat on this machine or your Flygo server.",
+  "version": "0.2.0",
+  "description": "Let your own Flygo AI agents drive this browser (Playwright MCP style) through your Flygo server.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtu6i/Ak90t69Ml1/1QEZz7MWLcTWqiz0ZIz2WSRG4j/KoPL7DQtkZnw174lZtNnL6LvdZsMWlB38xgqF/qb/Qgvf/SINJHa730tmBLusgCem0YB/3qd1bbojliG1lXCzIuaMUt6nTt/to/VwEtzQ9MjobCIShi4C57jNH8Hopo+fiCth0qvdwFfaCE9fhunXEgJhCOgOl310eBZja/ZtaZ2hKjKL163oSjbnrG9XxNm8DZC+uQ7FDE+IhyYFUV3uHhYjYdHJtELnq14qayRL1NjonXBdtIaX7o7olEpnZvwYXxrUfmq/EgMXSkrGtk7R2RHrtCzgCGOKdVvz6FQwmwIDAQAB",
   "minimum_chrome_version": "116",
   "permissions": ["debugger", "tabs", "tabGroups", "storage", "alarms", "identity", "declarativeNetRequest", "webRequest", "offscreen"],

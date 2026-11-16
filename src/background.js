@@ -1,16 +1,13 @@
 // Flygo Browser Bridge: service worker.
-// Exposes this browser to the user's own Flygo AI agents, the same way the Playwright MCP Bridge extension does:
-// the extension runs chrome.debugger / chrome.tabs calls sent by a CDP relay and streams the events back.
-//   - Local mode (preferred): a flygo-agent runner on this machine listens on 127.0.0.1:47800; the extension finds it
-//     and connects automatically. Playwright, network logs and network rules run on this machine.
-//   - Direct mode (fallback, no runner on this machine): the extension signs in to a Flygo server and connects to
-//     <server>/__apps/browser/ws; Playwright then runs on the server.
-// Network logging and network rules always run inside this browser (net.js); agents read and set them through tools.
+// Exposes this browser to the user's own Flygo AI agents through the Flygo Gateway WebSocket bridge
+// (<server>/__apps/gateway/ws), the way the Playwright MCP Bridge extension does locally: the extension runs chrome.debugger /
+// chrome.tabs calls for a CDP relay (capability "cdp"; Playwright runs on the server) and streams the events back. It also
+// declares the tools it runs itself (network log / rules / download). Sign in once from the popup; then it reconnects by
+// itself whenever the browser runs.
 import { Net } from './net.js';
+import { DECLARED_TOOLS, NET_OPS } from './tools.js';
 
 const VERSION = chrome.runtime.getManifest().version;
-const HUB = 'http://127.0.0.1:47800';
-const HUB_WS = 'ws://127.0.0.1:47800/ext';
 const PING_MS = 20_000;
 const PART = 200_000;
 
@@ -19,11 +16,11 @@ const st = {
   extId: null,          // random id of this browser profile (stable)
   name: '',             // display name chosen by the user
   pairings: {},         // server url -> {browser_id, token, name, slug}
-  direct: null,         // {server, ws_url} for direct mode
+  direct: null,         // {server, ws_url, user} of the server this browser is signed in to
   disabled: false,      // user pressed "Disconnect"
 };
 const live = {
-  ws: null, mode: null, hub: null, servers: [], control: {}, lastError: null, update: null, notice: null,
+  ws: null, mode: null, servers: [], control: {}, lastError: null, update: null, notice: null,
   rtt: null, connecting: false,
 };
 const attached = new Set();   // tab ids with the debugger attached
@@ -133,12 +130,30 @@ async function rpc(method, params) {
       await chrome.tabs.remove(tabId).catch(() => {});
       return {};
     }
+    case 'tools/call': return await callDeclared(params?.name, params?.arguments || {});
     case 'flygo.detachAll': await detachAll(); return { ok: true };
     case 'flygo.fetch': return await fetchForAgent(params?.url, params?.max_bytes);
     default:
       if (method.startsWith('flygo.net.')) return await net.handle(method.slice('flygo.net.'.length), params || {});
       throw new Error(`unsupported: ${method}`);
   }
+}
+
+/** Declared tools (run here). Returns an MCP tool result. */
+async function callDeclared(name, args) {
+  const text = (o, isError = false) => ({ ...(isError ? { isError: true } : {}), content: [{ type: 'text', text: typeof o === 'string' ? o : JSON.stringify(o, null, 1) }] });
+  try {
+    if (NET_OPS[name]) return text(await net.handle(NET_OPS[name], args));
+    if (name === 'browser_download') {
+      const r = await fetchForAgent(args.url, 50 * 1024 * 1024);
+      const fname = String(args.name || r.name || 'download');
+      return { content: [
+        { type: 'text', text: JSON.stringify({ ok: true, name: fname, bytes: r.bytes, type: r.type, status: r.status }) },
+        { type: 'resource', resource: { uri: `file:///${encodeURIComponent(fname)}`, name: fname, mimeType: r.type, blob: r.base64 } },
+      ] };
+    }
+    return text(`unknown tool ${name}`, true);
+  } catch (e) { return text(String(e?.message || e), true); }
 }
 
 async function detachAll() {
@@ -186,15 +201,6 @@ chrome.tabs.onRemoved.addListener((tabId) => { attached.delete(tabId); agentTabs
 function forward(method, params) { if (live.ws) sendObj({ method, params }); }
 
 // ------------------------------------------------------------------ connection
-async function hubHello() {
-  try {
-    const r = await fetch(`${HUB}/flygo/hello`, { signal: AbortSignal.timeout(1500), cache: 'no-store', headers: { 'X-Flygo-Bridge': chrome.runtime.id } });
-    if (!r.ok) return null;
-    const j = await r.json();
-    return j?.role === 'browser-hub' ? j : null;
-  } catch { return null; }
-}
-
 function closeWs(reason) {
   const ws = live.ws;
   live.ws = null; live.mode = null;
@@ -206,31 +212,25 @@ async function tick() {
   await loaded;
   if (tickTimer) { clearTimeout(tickTimer); tickTimer = null; }
   if (st.disabled) { if (live.ws) closeWs('disabled'); return render(); }
-  if (live.connecting) return;
-  if (live.ws && live.mode === 'local') return;
-  const hub = await hubHello();
-  if (hub) {
-    if (live.ws) closeWs('switching to local');
-    return connect('local', hub);
-  }
-  live.hub = null;
-  if (!live.ws && st.direct?.ws_url && st.pairings[st.direct.server]?.token) return connect('direct');
+  if (live.connecting || live.ws) return render();
+  if (st.direct?.ws_url && st.pairings[st.direct.server]?.token) return connect('direct');
   render();
-  // Keep looking while the service worker is alive; the alarm wakes it up again otherwise.
-  tickTimer = setTimeout(() => void tick(), live.ws ? 30_000 : 3000);
 }
 
-function connect(mode, hub) {
+function connect(mode) {
   live.connecting = true;
-  const url = mode === 'local' ? HUB_WS : st.direct.ws_url;
+  const url = st.direct.ws_url;
   let ws;
   try { ws = new WebSocket(url); } catch (e) { live.connecting = false; live.lastError = String(e?.message || e); return void setTimeout(tick, 5000); }
   ws.onopen = async () => {
     live.connecting = false;
-    live.ws = ws; live.mode = mode; live.hub = hub ?? null; live.lastError = null;
+    live.ws = ws; live.mode = mode; live.lastError = null;
     const info = await browserInfo();
-    if (mode === 'local') ws.send(JSON.stringify({ t: 'hello', ext_id: st.extId, ext_version: VERSION, info, pairings: st.pairings }));
-    else ws.send(JSON.stringify({ t: 'hello', token: st.pairings[st.direct.server]?.token, ext_version: VERSION, info }));
+    ws.send(JSON.stringify({
+      t: 'hello', token: st.pairings[st.direct.server]?.token,
+      client: { type: 'extension', kind: 'browser', name: st.name || info.engine, version: VERSION, engine: info.engine, os: info.os },
+      tools: DECLARED_TOOLS, capabilities: ['cdp'], exclusive: true, info,
+    }));
     pingTimer = setInterval(() => { live.pingAt = Date.now(); sendObj({ t: 'ping' }); }, PING_MS);
     render();
   };
@@ -246,29 +246,30 @@ function connect(mode, hub) {
   ws.onclose = (ev) => {
     live.connecting = false;
     if (live.ws === ws) { live.ws = null; live.mode = null; if (pingTimer) { clearInterval(pingTimer); pingTimer = null; } }
-    if (ev.code === 4401 && mode === 'direct') { live.lastError = 'Sign-in expired or removed. Sign in again.'; st.direct = null; void save(); }
+    if (ev.code === 4401 || ev.code === 4403) { live.lastError = 'Đã bị gỡ khỏi tài khoản hoặc hết phiên. Đăng nhập lại.'; st.direct = null; void save(); }
     live.control = {};
     void detachAll();
     render();
-    setTimeout(() => void tick(), mode === 'local' ? 1000 + Math.random() * 2000 : 5000);
+    setTimeout(() => void tick(), 3000 + Math.random() * 3000);
   };
-  ws.onerror = () => { live.lastError = mode === 'local' ? null : 'Cannot reach the Flygo server'; };
+  ws.onerror = () => { live.lastError = 'Không nối được máy chủ Flygo, đang thử lại…'; };
 }
 
 function onFlygo(m, mode) {
   const server = m.server || (mode === 'direct' ? st.direct?.server : null);
   switch (m.t) {
     case 'pong': if (live.pingAt) { live.rtt = Date.now() - live.pingAt; sendObj({ t: 'rtt', ms: live.rtt }); } break;
-    case 'welcome':
-      if (mode === 'local') { live.hub = { ...(live.hub || {}), ...(m.hub || {}) }; live.servers = m.servers || []; }
-      else if (m.browser && server) {
-        st.pairings[server] = { ...st.pairings[server], browser_id: m.browser.id, name: m.browser.name, slug: m.browser.slug };
-        if (!st.name) st.name = m.browser.name;
+    case 'welcome': {
+      const c = m.client || m.browser;
+      if (c && server) {
+        st.pairings[server] = { ...st.pairings[server], browser_id: c.id, name: c.name, slug: c.slug };
+        if (!st.name) st.name = c.name;
         live.servers = [{ server, state: 'online', user: st.direct?.user || null }];
         void save();
       }
       if (m.latest_version && newer(m.latest_version, VERSION)) live.update = { latest_version: m.latest_version, download_url: m.download_url };
       break;
+    }
     case 'status': live.servers = m.servers || []; break;
     case 'paired':
       if (m.pairing) st.pairings[m.server] = { ...st.pairings[m.server], ...m.pairing };
@@ -293,7 +294,7 @@ function onFlygo(m, mode) {
       break;
     case 'update': if (m.required || (m.latest_version && newer(m.latest_version, VERSION))) live.update = m; break;
     case 'notice': live.notice = { text: m.text, at: Date.now() }; break;
-    case 'error': live.lastError = m.message || m.code; break;
+    case 'error': live.lastError = m.message || m.code; if (m.code === 'outdated') live.update = { required: true, download_url: m.download_url }; break;
   }
   render();
 }
@@ -316,7 +317,7 @@ function refreshBadge() {
 async function snapshot() {
   await loaded;
   return {
-    version: VERSION, name: st.name, disabled: st.disabled, mode: live.mode, connecting: live.connecting, hub: live.hub, servers: live.servers,
+    version: VERSION, name: st.name, disabled: st.disabled, mode: live.mode, connecting: live.connecting, servers: live.servers,
     pairings: Object.fromEntries(Object.entries(st.pairings).map(([k, v]) => [k, { name: v.name, slug: v.slug, browser_id: v.browser_id }])),
     control: live.control, attached: attached.size, agentTabs: agentTabs.size, rtt: live.rtt, lastError: live.lastError,
     update: live.update, notice: live.notice && Date.now() - live.notice.at < 60_000 ? live.notice : null,
@@ -363,19 +364,20 @@ async function login(serverInput) {
   const challenge = b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
   const state = randomId();
   const redirect = chrome.identity.getRedirectURL('cb');
-  const start = `${server}/__apps/browser/login?${new URLSearchParams({ redirect_uri: redirect, code_challenge: challenge, state })}`;
+  const start = `${server}/__apps/gateway/login?${new URLSearchParams({ redirect_uri: redirect, code_challenge: challenge, state })}`;
   const back = new URL(await chrome.identity.launchWebAuthFlow({ url: start, interactive: true }));
   if (back.searchParams.get('state') !== state) throw new Error('Sign-in state mismatch');
   if (back.searchParams.get('error')) throw new Error(back.searchParams.get('error'));
-  const r = await fetch(`${server}/__apps/browser/api/pair-code`, {
+  const r = await fetch(`${server}/__apps/gateway/api/pair-code`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code: back.searchParams.get('code'), code_verifier: verifier, browser: await browserInfo(), replace: st.pairings[server]?.browser_id }),
+    body: JSON.stringify({ code: back.searchParams.get('code'), code_verifier: verifier, client: { type: 'extension', kind: 'browser', ...(await browserInfo()) }, replace: st.pairings[server]?.browser_id }),
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok || !j.token) throw new Error(j.error || `Sign-in failed (${r.status})`);
-  st.pairings[server] = { browser_id: j.browser.id, token: j.token, name: j.browser.name, slug: j.browser.slug };
+  const c = j.client || j.browser;
+  st.pairings[server] = { browser_id: c.id, token: j.token, name: c.name, slug: c.slug };
   st.direct = { server, ws_url: j.ws_url, user: j.user?.name || null };
-  if (!st.name) st.name = j.browser.name;
+  if (!st.name) st.name = c.name;
   await save();
   live.notice = { text: `Signed in to ${u.host} as ${j.user?.name || 'you'}.`, at: Date.now() };
 }

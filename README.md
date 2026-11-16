@@ -5,24 +5,22 @@ A Chrome / Edge extension that lets **your own** Flygo AI agents drive **this** 
 the Chrome DevTools Protocol (`chrome.debugger`), and the agent gets the Playwright MCP tool set (navigate, snapshot,
 click, type, fill forms, tabs, screenshots, upload/download…) plus network logging and network rules.
 
-It is the browser end of the Flygo app **"Trình duyệt"** (`vn.flygo.browser`):
+It connects **out** to the Flygo Gateway WebSocket bridge of your Flygo server (`<server>/__apps/gateway/ws`, app
+`vn.flygo.clients`), so no port is opened on your computer. The extension declares the tools it runs itself (network log,
+network rules, download) and the `cdp` capability; the Playwright engine runs on the server and drives the browser through
+this connection. Agents reach it through the Gateway like any other MCP: only agents acting for **the same account**, with
+the usual per-tool approval in Flygo Chat.
 
-- **Local mode (preferred).** When a `flygo-agent` runner (or the Flygo Chat desktop app) runs on this machine, it listens
-  on `127.0.0.1:47800`. The extension finds it and connects automatically: no sign-in, no ports opened. Playwright,
-  network logs and network rules all run on this machine. One browser can be used by agents of several Flygo servers
-  (each runner registers it with its own server).
-- **Direct mode (fallback).** Without a runner on this machine, sign in from the popup with your Flygo server address.
-  The extension then connects to `<server>/__apps/browser/ws` and Playwright runs on the server.
-
-Agents only ever reach browsers of the **same account**. Chrome shows its own "… is debugging this browser" bar while an
-agent is attached; the popup shows who is in control and has **Stop** and **Disconnect** buttons.
+Chrome shows its own "… is debugging this browser" bar while an agent is attached; the popup shows who is in control and
+has **Stop**, **Disconnect** and **Sign out** buttons.
 
 ## Install (manual)
 
 1. Download the zip from your Flygo server (or build it: `scripts/pack.sh`) and unzip it into a folder you keep.
 2. Open `chrome://extensions` (Edge: `edge://extensions`) and turn on **Developer mode**.
 3. Click **Load unpacked** and pick the folder.
-4. Open Flygo Chat on this machine (or a runner): the popup turns cyan, **CONNECTED · LOCAL**. Done.
+4. Click the extension icon, enter your Flygo Chat server and **Sign in with Flygo** (one click when you are already signed
+   in to Flygo Chat in this browser). The popup turns cyan, **CONNECTED**. From then on it reconnects by itself.
 
 To update: unzip the new version over the same folder and click ↻ **Reload** on the extension card. Pairings are kept.
 
@@ -55,12 +53,13 @@ Rules are stored in the browser and survive restarts (`browser_net_rule_add`, `b
 
 ## Protocol
 
-Local hub (`ws://127.0.0.1:47800/ext`, the hub only accepts this extension's `Origin`):
-`{t:"hello", ext_id, ext_version, info, pairings}` → RPC frames `{id, method, params}` / `{id, result|error}` and events
-`{method, params}` exactly like the Playwright MCP relay (`chrome.debugger.attach|detach|sendCommand`,
-`chrome.tabs.create|remove`, events `chrome.debugger.onEvent|onDetach`, `chrome.tabs.onCreated|onRemoved`), plus
-`flygo.*` methods (network tools, `flygo.fetch`, `flygo.detachAll`) and `{t:…}` status messages. Messages over 200 KB are
-split into `{t:"part", k, i, n, d}` frames.
+`<server>/__apps/gateway/ws`, first frame `{t:"hello", token:"fbd_…", client:{type:"extension", kind:"browser", name, version},
+tools:[…declared tools…], capabilities:["cdp"], exclusive:true}` → `{t:"welcome", client:{id, name, slug}}`. Then JSON-RPC:
+the server sends `{id, method, params}` (`tools/call` for declared tools; `chrome.debugger.attach|detach|sendCommand`,
+`chrome.tabs.create|remove`, exactly like the Playwright MCP relay) and the extension answers `{id, result|error}` and streams
+events `{method, params}` (`chrome.debugger.onEvent|onDetach`, `chrome.tabs.onCreated|onRemoved`). Messages over 200 KB are
+split into `{t:"part", k, i, n, d}` frames. The device token comes from signing in (`/login` → Flygo ID → one-time code +
+PKCE → `/api/pair-code`) and can be revoked from Flygo Chat (Settings › My browsers).
 
 ## License
 
