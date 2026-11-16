@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><title>Flygo Browser Bridge</title><link rel="stylesheet" href="popup.css"></head>
+<body>
+  <header>
+    <div class="logo">FLYGO<span>//</span>BRIDGE</div>
+    <div class="ver" id="ver"></div>
+  </header>
+  <section class="status" id="status"><i class="dot"></i><b id="stTitle">…</b><small id="stSub"></small></section>
+  <section class="control hidden" id="control">
+    <div class="glitch" data-t="AI ĐANG ĐIỀU KHIỂN">AI ĐANG ĐIỀU KHIỂN</div>
+    <div id="ctlWho"></div>
+    <button id="stop" class="danger">■ DỪNG</button>
+  </section>
+  <section class="name">
+    <label>TÊN</label>
+    <input id="name" maxlength="60" spellcheck="false" placeholder="vd Chrome văn phòng">
+    <div class="tag" id="tag"></div>
+  </section>
+  <section class="servers" id="servers"></section>
+  <section class="stats" id="stats"></section>
+  <section class="notice hidden" id="notice"></section>
+  <section class="login hidden" id="login">
+    <div class="hint">Không thấy Flygo Chat / runner trên máy này. Có thể đăng nhập thẳng máy chủ:</div>
+    <input id="server" placeholder="chat.congty.vn" spellcheck="false">
+    <button id="doLogin">ĐĂNG NHẬP FLYGO</button>
+  </section>
+  <footer>
+    <button id="share" class="ghost">⇪ ĐƯA TAB NÀY CHO AGENT</button>
+    <button id="toggle" class="ghost">NGẮT</button>
+  </footer>
+  <script src="popup.js" type="module"></script>
+</body></html>
