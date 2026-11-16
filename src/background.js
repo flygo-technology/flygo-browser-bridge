@@ -18,6 +18,7 @@ const st = {
   pairings: {},         // server url -> {browser_id, token, name, slug}
   direct: null,         // {server, ws_url, user} of the server this browser is signed in to
   disabled: false,      // user pressed "Disconnect"
+  noAutoPair: false,    // removed from the account / signed out: don't pair again by itself until the user asks
 };
 const live = {
   ws: null, mode: null, servers: [], control: {}, lastError: null, update: null, notice: null,
@@ -32,15 +33,16 @@ let partSeq = 0;
 const parts = new Map();
 
 const loaded = (async () => {
-  const s = await chrome.storage.local.get(['extId', 'name', 'pairings', 'direct', 'disabled']);
+  const s = await chrome.storage.local.get(['extId', 'name', 'pairings', 'direct', 'disabled', 'noAutoPair']);
   st.extId = s.extId || randomId();
   st.name = s.name || '';
   st.pairings = s.pairings || {};
   st.direct = s.direct || null;
   st.disabled = !!s.disabled;
+  st.noAutoPair = !!s.noAutoPair;
   if (!s.extId) await chrome.storage.local.set({ extId: st.extId });
 })();
-const save = () => chrome.storage.local.set({ name: st.name, pairings: st.pairings, direct: st.direct, disabled: st.disabled });
+const save = () => chrome.storage.local.set({ name: st.name, pairings: st.pairings, direct: st.direct, disabled: st.disabled, noAutoPair: st.noAutoPair });
 
 function randomId() {
   const b = crypto.getRandomValues(new Uint8Array(18));
@@ -208,13 +210,50 @@ function closeWs(reason) {
   try { ws?.close(1000, reason); } catch {}
 }
 
+// Flygo Chat desktop on this machine (signed in) answers on 127.0.0.1:47800 for pairing only.
+const LOCAL_APP = 'http://127.0.0.1:47800';
+async function localApp() {
+  try {
+    const r = await fetch(`${LOCAL_APP}/flygo/hello`, { signal: AbortSignal.timeout(1500), cache: 'no-store', headers: { 'X-Flygo-Bridge': chrome.runtime.id } });
+    const j = r.ok ? await r.json() : null;
+    return j?.role === 'pairing' && j.server ? j : null;
+  } catch { return null; }
+}
+
+/** Pair with the Flygo Chat app signed in on this machine (no sign-in needed). */
+async function pairLocal() {
+  const r = await fetch(`${LOCAL_APP}/flygo/pair`, {
+    method: 'POST', signal: AbortSignal.timeout(20_000), headers: { 'Content-Type': 'application/json', 'X-Flygo-Bridge': chrome.runtime.id },
+    body: JSON.stringify({ client: await browserInfo(), replace: Object.values(st.pairings)[0]?.browser_id }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.token || !j.ws_url) throw new Error(j.error || `Flygo Chat từ chối ghép (${r.status})`);
+  const server = String(j.server).replace(/\/+$/, '');
+  st.pairings[server] = { browser_id: j.client?.id, token: j.token, name: j.client?.name, slug: j.client?.slug };
+  st.direct = { server, ws_url: j.ws_url, user: j.user || null };
+  st.noAutoPair = false;
+  if (!st.name && j.client?.name) st.name = j.client.name;
+  await save();
+  live.notice = { text: `Đã kết nối qua Flygo Chat trên máy này (${j.user || 'tài khoản của bạn'}).`, at: Date.now() };
+}
+
 async function tick() {
   await loaded;
   if (tickTimer) { clearTimeout(tickTimer); tickTimer = null; }
   if (st.disabled) { if (live.ws) closeWs('disabled'); return render(); }
-  if (live.connecting || live.ws) return render();
+  if (live.connecting || live.ws || live.pairing) return render();
   if (st.direct?.ws_url && st.pairings[st.direct.server]?.token) return connect('direct');
+  // Not signed in: if Flygo Chat runs on this machine, pair with it automatically.
+  const app = await localApp();
+  live.localApp = app;
+  if (app && !st.noAutoPair && !live.pairing) {
+    live.pairing = true;
+    try { await pairLocal(); return connect('direct'); }
+    catch (e) { live.lastError = String(e?.message || e); }
+    finally { live.pairing = false; }
+  }
   render();
+  tickTimer = setTimeout(() => void tick(), 5000);
 }
 
 function connect(mode) {
@@ -246,7 +285,7 @@ function connect(mode) {
   ws.onclose = (ev) => {
     live.connecting = false;
     if (live.ws === ws) { live.ws = null; live.mode = null; if (pingTimer) { clearInterval(pingTimer); pingTimer = null; } }
-    if (ev.code === 4401 || ev.code === 4403) { live.lastError = 'Đã bị gỡ khỏi tài khoản hoặc hết phiên. Đăng nhập lại.'; st.direct = null; void save(); }
+    if (ev.code === 4401 || ev.code === 4403) { live.lastError = 'Đã bị gỡ khỏi tài khoản. Bấm Kết nối để nối lại.'; st.direct = null; st.noAutoPair = true; void save(); }
     live.control = {};
     void detachAll();
     render();
@@ -322,6 +361,7 @@ async function snapshot() {
     control: live.control, attached: attached.size, agentTabs: agentTabs.size, rtt: live.rtt, lastError: live.lastError,
     update: live.update, notice: live.notice && Date.now() - live.notice.at < 60_000 ? live.notice : null,
     direct: st.direct ? { server: st.direct.server, user: st.direct.user || null } : null, net: await net.summary(),
+    localApp: live.localApp ? { server: live.localApp.server, user: live.localApp.user } : null,
   };
 }
 function render() { refreshBadge(); chrome.runtime.sendMessage({ type: 'state' }).catch(() => {}); }
@@ -347,7 +387,8 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       }
       case 'toggle': st.disabled = !st.disabled; await save(); if (st.disabled) { closeWs('disabled'); await detachAll(); } void tick(); return snapshot();
       case 'login': await login(String(msg.server || '')); void tick(); return snapshot();
-      case 'logout': if (st.direct) { delete st.pairings[st.direct.server]; st.direct = null; await save(); closeWs('logout'); } return snapshot();
+      case 'logout': if (st.direct) { delete st.pairings[st.direct.server]; st.direct = null; st.noAutoPair = true; await save(); closeWs('logout'); } return snapshot();
+      case 'pair_local': st.noAutoPair = false; await save(); await pairLocal(); void tick(); return snapshot();
     }
   })().then(reply, (e) => reply({ error: String(e?.message || e) }));
   return true;

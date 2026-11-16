@@ -14,6 +14,7 @@ function render(s) {
   if (s.disabled) { $('stTitle').textContent = 'ĐÃ NGẮT'; $('stSub').textContent = 'Agent không dùng được trình duyệt này.'; }
   else if (s.mode) { $('stTitle').textContent = 'ĐÃ NỐI'; $('stSub').textContent = `${host(s.direct?.server)}${s.direct?.user ? ` · ${s.direct.user}` : ''}${s.rtt ? ` · ${s.rtt} ms` : ''}`; }
   else if (s.direct) { $('stTitle').textContent = s.connecting ? 'ĐANG NỐI…' : 'MẤT KẾT NỐI'; $('stSub').textContent = s.lastError || `đang thử lại ${host(s.direct.server)}…`; }
+  else if (s.localApp) { $('stTitle').textContent = 'THẤY FLYGO CHAT'; $('stSub').textContent = s.lastError || `${host(s.localApp.server)} · ${s.localApp.user || ''}`; }
   else { $('stTitle').textContent = 'CHƯA ĐĂNG NHẬP'; $('stSub').textContent = s.lastError || 'Đăng nhập Flygo để agent của bạn dùng trình duyệt này.'; }
 
   $('control').classList.toggle('hidden', !ctl.length);
@@ -32,7 +33,9 @@ function render(s) {
   const note = s.update ? `⬆ Có bản ${s.update.latest_version || 'mới'}${s.update.required ? ' (bắt buộc)' : ''}${s.update.download_url ? ` · <a href="${esc(s.update.download_url)}" target="_blank" style="color:var(--cyan)">tải zip</a>` : ''}` : s.notice?.text ? esc(s.notice.text) : '';
   $('notice').innerHTML = note;
   $('notice').classList.toggle('hidden', !note);
-  $('login').classList.toggle('hidden', !!s.direct || s.disabled);
+  $('pairApp').classList.toggle('hidden', !!s.direct || s.disabled || !s.localApp);
+  if (s.localApp) $('pairAppHint').textContent = `Flygo Chat trên máy này: ${host(s.localApp.server)} · ${s.localApp.user || ''}`;
+  $('login').classList.toggle('hidden', !!s.direct || s.disabled || !!s.localApp);
   $('logout').classList.toggle('hidden', !s.direct);
   $('toggle').textContent = s.disabled ? 'NỐI LẠI' : 'NGẮT';
   $('share').classList.toggle('hidden', !s.mode);
@@ -44,6 +47,7 @@ chrome.runtime.onMessage.addListener((m) => { if (m?.type === 'state') void refr
 $('stop').onclick = async () => render(await ask({ type: 'stop' }));
 $('toggle').onclick = async () => render(await ask({ type: 'toggle' }));
 $('logout').onclick = async () => render(await ask({ type: 'logout' }));
+$('doPairApp').onclick = async () => { const r = await ask({ type: 'pair_local' }); if (r?.error) { $('stSub').textContent = r.error; return; } render(r); };
 $('share').onclick = async () => render(await ask({ type: 'share_tab' }));
 $('name').onfocus = () => { editing = true; };
 $('name').onblur = async () => { editing = false; render(await ask({ type: 'rename', name: $('name').value })); };

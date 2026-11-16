@@ -19,7 +19,8 @@ has **Stop**, **Disconnect** and **Sign out** buttons.
 1. Download the zip from your Flygo server (or build it: `scripts/pack.sh`) and unzip it into a folder you keep.
 2. Open `chrome://extensions` (Edge: `edge://extensions`) and turn on **Developer mode**.
 3. Click **Load unpacked** and pick the folder.
-4. Click the extension icon, enter your Flygo Chat server and **Sign in with Flygo** (one click when you are already signed
+4. If Flygo Chat (desktop) is open and signed in on this computer, the extension pairs with it **automatically**: nothing to
+   click. Otherwise click the extension icon, enter your Flygo Chat server and **Sign in with Flygo** (one click when you are already signed
    in to Flygo Chat in this browser). The popup turns cyan, **CONNECTED**. From then on it reconnects by itself.
 
 To update: unzip the new version over the same folder and click ↻ **Reload** on the extension card. Pairings are kept.
