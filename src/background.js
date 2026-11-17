@@ -25,6 +25,8 @@ const live = { control: {}, lastError: null, update: null, notice: null, localAp
 const conns = new Map();      // server url -> {ws, state, rtt, pingAt, pingTimer, error}
 const attached = new Set();   // tab ids with the debugger attached (any server)
 const tabOwner = new Map();   // tab id -> server url whose agent controls it
+const attaching = new Map();  // tab id -> pending chrome.debugger.attach
+let creatingFor = null;       // server creating a tab right now (its onCreated is not a user tab)
 const agentTabs = new Set();  // tabs created by an agent
 let groupId = null;
 let tickTimer = null;
@@ -104,11 +106,21 @@ async function rpc(server, method, params) {
     case 'chrome.debugger.attach': {
       const [target, ver] = params;
       const owner = tabOwner.get(target.tabId);
-      if (attached.has(target.tabId) && owner && owner !== server) throw new Error('Tab đang được agent của máy chủ khác điều khiển');
-      if (!attached.has(target.tabId)) await chrome.debugger.attach(target, ver || '1.3');
+      if ((attached.has(target.tabId) || attaching.has(target.tabId)) && owner && owner !== server) throw new Error('Tab đang được agent của máy chủ khác điều khiển');
+      tabOwner.set(target.tabId, server);
+      // One attach per tab even when Playwright asks twice at once (auto-attach + new target).
+      if (!attached.has(target.tabId)) {
+        let p = attaching.get(target.tabId);
+        if (!p) {
+          p = chrome.debugger.attach(target, ver || '1.3').finally(() => attaching.delete(target.tabId));
+          attaching.set(target.tabId, p);
+        }
+        await p;
+      }
       attached.add(target.tabId);
       tabOwner.set(target.tabId, server);
       await net.onAttach(target.tabId);
+      if (live.control[server]) void overlay(target.tabId, true, controlLabel(server));
       refreshBadge();
       return {};
     }
@@ -129,7 +141,9 @@ async function rpc(server, method, params) {
     }
     case 'chrome.tabs.create': {
       const [opts] = params;
-      const tab = await chrome.tabs.create({ url: opts?.url || 'about:blank', active: !!opts?.active });
+      creatingFor = server;
+      let tab;
+      try { tab = await chrome.tabs.create({ url: opts?.url || 'about:blank', active: !!opts?.active }); } finally { creatingFor = null; }
       agentTabs.add(tab.id);
       tabOwner.set(tab.id, server);
       void addToGroup(tab.id);
@@ -140,6 +154,17 @@ async function rpc(server, method, params) {
       if (tabOwner.has(tabId) && tabOwner.get(tabId) !== server) throw new Error('Tab không thuộc phiên điều khiển này');
       await chrome.tabs.remove(tabId).catch(() => {});
       return {};
+    }
+    case 'flygo.tabs': {
+      // Tabs this server's agent may use: every debuggable tab not held by another server.
+      const out = [];
+      for (const t of await chrome.tabs.query({})) {
+        if (t.id === undefined || /^(chrome|edge|devtools|chrome-extension):/i.test(t.url || '')) continue;
+        const o = tabOwner.get(t.id);
+        if (o && o !== server && (attached.has(t.id) || attaching.has(t.id))) continue;
+        out.push({ id: t.id, url: t.url, title: t.title });
+      }
+      return out;
     }
     case 'tools/call': return await callDeclared(params?.name, params?.arguments || {});
     case 'flygo.detachAll': await detachAll(server); return { ok: true };
@@ -171,6 +196,7 @@ async function callDeclared(name, args) {
 async function detachAll(server) {
   for (const tabId of [...attached]) {
     if (server && tabOwner.get(tabId) !== server) continue;
+    void overlay(tabId, false);
     await chrome.debugger.detach({ tabId }).catch(() => {});
     attached.delete(tabId); tabOwner.delete(tabId);
   }
@@ -214,6 +240,70 @@ chrome.debugger.onDetach.addListener((source, reason) => {
 chrome.tabs.onCreated.addListener((tab) => {
   const owner = tab.openerTabId !== undefined && attached.has(tab.openerTabId) ? tabOwner.get(tab.openerTabId) : null;
   if (owner) { agentTabs.add(tab.id); tabOwner.set(tab.id, owner); void addToGroup(tab.id); sendTo(conns.get(owner), { method: 'chrome.tabs.onCreated', params: [tab] }); }
+  // Created by an agent (chrome.tabs.create in progress): that server already knows it.
+  else if (creatingFor) { tabOwner.set(tab.id, creatingFor); agentTabs.add(tab.id); }
+  // Tab the user opens: every connected server's agent may use it (first to attach keeps it).
+  else sendAll({ method: 'chrome.tabs.onCreated', params: [{ ...tab, flygoShared: true }] });
+});
+
+/** All the user's tabs are available to agents: tell a server about every tab that can be debugged. */
+async function shareAllTabs(c) {
+  for (const t of await chrome.tabs.query({})) {
+    if (t.id === undefined || /^(chrome|edge|devtools|chrome-extension):/i.test(t.url || '')) continue;
+    sendTo(c, { method: 'chrome.tabs.onCreated', params: [{ ...t, openerTabId: undefined, flygoShared: true }] });
+  }
+}
+
+// ------------------------------------------------------------------ "agent is controlling" effect in the page
+// Glowing border + small label, pointer-events none and aria-hidden: doesn't block the agent or change what it reads.
+function overlayFn(on, label) {
+  const ID = '__flygo_bridge_overlay__';
+  let host = document.getElementById(ID);
+  if (!on) { host?.remove(); return; }
+  if (!host) {
+    host = document.createElement('div');
+    host.id = ID;
+    host.setAttribute('aria-hidden', 'true');
+    host.style.cssText = 'all:initial;position:fixed;inset:0;z-index:2147483647;pointer-events:none;';
+    const root = host.attachShadow({ mode: 'closed' });
+    root.innerHTML = `<style>
+      .b{position:fixed;inset:0;border:3px solid #1a73e8;border-radius:6px;box-shadow:inset 0 0 18px rgba(26,115,232,.55);animation:p 1.6s ease-in-out infinite}
+      .b.in{animation:in .7s ease-out, p 1.6s ease-in-out .7s infinite}
+      @keyframes in{0%{opacity:0;box-shadow:inset 0 0 120px rgba(26,115,232,.9)}100%{opacity:1}}
+      @keyframes p{50%{box-shadow:inset 0 0 6px rgba(26,115,232,.35);border-color:#4f9bff}}
+      .t{position:fixed;top:10px;right:10px;font:600 12px/1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#fff;background:#1a73e8;border-radius:999px;padding:7px 11px;box-shadow:0 2px 8px rgba(0,0,0,.25);animation:s .5s ease-out}
+      @keyframes s{0%{transform:translateY(-14px);opacity:0}100%{transform:none;opacity:1}}
+    </style><div class="b in"></div><div class="t"></div>`;
+    host.__t = root.querySelector('.t');
+    (document.documentElement || document.body).appendChild(host);
+  }
+  if (host.__t) host.__t.textContent = label;
+}
+async function overlay(tabId, on, label = '') {
+  try { await chrome.scripting.executeScript({ target: { tabId }, func: overlayFn, args: [on, label], world: 'ISOLATED' }); } catch {}
+}
+function controlLabel(server) {
+  const c = live.control[server];
+  return c ? `🤖 ${c.agent || 'Agent'} đang điều khiển` : '';
+}
+/** Show / hide the effect on every tab a server controls. */
+function refreshOverlays(server) {
+  for (const [tabId, owner] of tabOwner) if (owner === server && attached.has(tabId)) void overlay(tabId, !!live.control[server], controlLabel(server));
+}
+let blinkTimer = null;
+function blinkBadge() {
+  let n = 0;
+  clearInterval(blinkTimer);
+  blinkTimer = setInterval(() => {
+    chrome.action.setBadgeBackgroundColor({ color: n % 2 ? '#c2185b' : '#1a73e8' });
+    if (++n >= 8) { clearInterval(blinkTimer); refreshBadge(); }
+  }, 350);
+}
+// Page reloads remove the effect: put it back while the agent is still in control.
+chrome.tabs.onUpdated.addListener((tabId, info) => {
+  if (info.status !== 'complete' || !attached.has(tabId)) return;
+  const owner = tabOwner.get(tabId);
+  if (owner && live.control[owner]) void overlay(tabId, true, controlLabel(owner));
 });
 chrome.tabs.onRemoved.addListener((tabId) => {
   const c = ownerConn(tabId);
@@ -358,6 +448,7 @@ function onFlygo(c, m) {
         void save();
       }
       if (m.latest_version && newer(m.latest_version, VERSION)) live.update = { latest_version: m.latest_version, download_url: m.download_url };
+      void shareAllTabs(c);
       break;
     }
     case 'renamed':
@@ -370,11 +461,15 @@ function onFlygo(c, m) {
       closeConn(server, 'revoked');
       void save();
       break;
-    case 'control':
+    case 'control': {
+      const was = !!live.control[server];
       if (m.active) live.control[server] = { agent: m.agent, machine: m.machine, since: Date.now(), taken_from: m.taken_from };
       else delete live.control[server];
       refreshBadge();
+      refreshOverlays(server);
+      if (m.active && !was) blinkBadge();
       break;
+    }
     case 'update': if (m.required || (m.latest_version && newer(m.latest_version, VERSION))) live.update = m; break;
     case 'notice': live.notice = { text: m.text, at: Date.now() }; break;
     case 'error': c.error = m.message || m.code; if (m.code === 'outdated') live.update = { required: true, download_url: m.download_url }; break;
@@ -429,9 +524,10 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         return snapshot();
       }
       case 'stop': sendAll({ t: 'stop' }); await detachAll(); live.control = {}; render(); return snapshot();
-      case 'share_tab': {
+      case 'preview_effect': {
+        // Popup "thử hiệu ứng" (kiểm tra): show the effect on the active tab for 3 s.
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tab?.id) { agentTabs.add(tab.id); void addToGroup(tab.id); sendAll({ method: 'chrome.tabs.onCreated', params: [{ ...tab, openerTabId: undefined, flygoShared: true }] }); }
+        if (tab?.id) { await overlay(tab.id, true, '🤖 Agent đang điều khiển'); setTimeout(() => void overlay(tab.id, false), 3000); blinkBadge(); }
         return snapshot();
       }
       case 'toggle': st.disabled = !st.disabled; await save(); if (st.disabled) { for (const s of [...conns.keys()]) closeConn(s, 'disabled'); await detachAll(); } void tick(); return snapshot();

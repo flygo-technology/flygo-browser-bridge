@@ -45,7 +45,6 @@ function render(s) {
   $('login').classList.toggle('hidden', s.disabled);
   $('toggle').textContent = s.disabled ? 'Nối lại' : 'Ngắt';
   $('logout').classList.toggle('hidden', !servers.length);
-  $('share').classList.toggle('hidden', !s.connected);
 }
 
 async function refresh() { render(await ask({ type: 'get' })); }
@@ -53,7 +52,6 @@ chrome.runtime.onMessage.addListener((m) => { if (m?.type === 'state') void refr
 $('gear').onclick = () => { const m = $('manual'); m.classList.toggle('hidden'); $('gear').classList.toggle('on', !m.classList.contains('hidden')); };
 $('stop').onclick = async () => render(await ask({ type: 'stop' }));
 $('toggle').onclick = async () => render(await ask({ type: 'toggle' }));
-$('share').onclick = async () => render(await ask({ type: 'share_tab' }));
 $('logout').onclick = async () => render(await ask({ type: 'logout' }));
 $('doPairApp').onclick = async () => { const r = await ask({ type: 'pair_local' }); if (r?.error) { $('stSub').textContent = r.error; return; } render(r); };
 $('name').onfocus = () => { editing = true; };
