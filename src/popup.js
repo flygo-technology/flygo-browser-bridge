@@ -78,6 +78,19 @@ function render(s) {
   $('notice').innerHTML = note;
   $('notice').classList.toggle('hidden', !note);
 
+  // Waiting for the owner to send a password / code through the link the agent shared.
+  const waits = s.secrets?.pending || [];
+  const kindName = { password: 'mật khẩu', otp: 'mã OTP', text: 'giá trị' };
+  $('secretWait').innerHTML = waits.map((w) => {
+    const left = Math.max(0, Math.round((w.exp - Date.now()) / 1000));
+    return `<div>Đang chờ ${kindName[w.kind] || 'giá trị'} cho <b>${esc(host(w.origin))}</b>${w.agent ? ` (${esc(w.agent)})` : ''} · còn ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}</div>`;
+  }).join('');
+  $('secretWait').classList.toggle('hidden', !waits.length);
+  const saved = s.secrets?.saved || [];
+  $('vaultBox').classList.toggle('hidden', !saved.length);
+  $('vault').innerHTML = saved.map((v) => `<div class="mg"><span title="${esc(v.label)}">${esc(host(v.origin))}</span><button data-origin="${esc(v.origin)}">Xoá</button></div>`).join('');
+  for (const b of $('vault').querySelectorAll('button')) b.onclick = async () => render(await ask({ type: 'vault_delete', origin: b.dataset.origin }));
+
   // Settings: remove a server (recovery), pair servers Flygo Chat knows but this browser skipped, or add one by hand.
   $('manage').innerHTML = servers.map((x) => `<div class="mg"><span>${esc(host(x.server))}</span><button data-server="${esc(x.server)}">Gỡ</button></div>`).join('');
   for (const b of $('manage').querySelectorAll('button')) b.onclick = async () => render(await ask({ type: 'logout', server: b.dataset.server }));

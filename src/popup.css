@@ -101,3 +101,6 @@ button.primary:hover { filter:brightness(1.06); }
 .mg button:hover { border-color:var(--bad); background:var(--bad-soft); }
 .via { display:inline-block; margin-right:6px; padding:0 5px; border-radius:4px; font-size:10px; font-weight:700; letter-spacing:.02em; background:var(--soft); color:var(--mute); }
 .via.p2p { background:var(--ok-soft); color:var(--ok); }
+.wait { padding:9px 12px; border-radius:10px; background:var(--accent-soft); color:var(--accent); font-size:12px; }
+.wait b { font-weight:650; }
+.wait div + div { margin-top:4px; }

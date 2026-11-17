@@ -7,6 +7,7 @@
 // agents work in the tabs they opened.
 import { Net, ensureOffscreen } from './net.js';
 import { DECLARED_TOOLS, NET_OPS } from './tools.js';
+import { learnPasswords, learnVault, pendingList, scrub, secretCancel, secretFill, secretRequest, vaultDelete, vaultList } from './secrets.js';
 
 const VERSION = chrome.runtime.getManifest().version;
 const PING_MS = 20_000;
@@ -90,7 +91,7 @@ function sendWs(c, obj) {
   frame(obj, PART, (s) => ws.send(s));
 }
 function frame(obj, part, out) {
-  const s = JSON.stringify(obj);
+  const s = scrub(JSON.stringify(obj)); // never let a password leave the browser (see secrets.js)
   if (s.length <= part) return out(s);
   const k = `e${++partSeq}`, n = Math.ceil(s.length / part);
   for (let i = 0; i < n; i++) out(JSON.stringify({ t: 'part', k, i, n, d: s.slice(i * part, (i + 1) * part) }));
@@ -116,6 +117,12 @@ async function addToGroup(tabId) {
   } catch {}
 }
 
+const secretDeps = {
+  tabsOf: (server) => [...tabOwner].filter(([, o]) => o === server).map(([t]) => t),
+  attached: (tabId) => attached.has(tabId),
+  changed: () => render(),
+};
+
 async function rpc(server, method, params) {
   switch (method) {
     case 'chrome.debugger.attach': {
@@ -135,6 +142,7 @@ async function rpc(server, method, params) {
       attached.add(target.tabId);
       tabOwner.set(target.tabId, server);
       await net.onAttach(target.tabId);
+      void learnVault().catch(() => {});
       if (live.control[server]) void overlay(target.tabId, true, controlLabel(server));
       refreshBadge();
       return {};
@@ -153,7 +161,10 @@ async function rpc(server, method, params) {
       if (m === 'Input.dispatchMouseEvent' && !target.sessionId) void cursor(target.tabId, p);
       // Playwright's own Fetch interception is merged with our network rules (one debugger session per tab).
       if (!target.sessionId && (m === 'Fetch.enable' || m === 'Fetch.disable')) return net.pwFetch(target.tabId, m, p);
-      return await chrome.debugger.sendCommand(target, m, p);
+      const res = await chrome.debugger.sendCommand(target, m, p);
+      // Results that read the page (snapshot, evaluate, DOM) may carry password-field values: learn them first so they get scrubbed.
+      if (/^(Runtime|DOM|Accessibility)\./.test(m)) await learnPasswords(target.tabId, JSON.stringify(res ?? '').includes('textbox'));
+      return res;
     }
     case 'chrome.tabs.create': {
       const [opts] = params;
@@ -184,6 +195,8 @@ async function rpc(server, method, params) {
       return out;
     }
     case 'tools/call': return await callDeclared(params?.name, params?.arguments || {});
+    case 'flygo.secret_request': return await secretRequest(secretDeps, server, params);
+    case 'flygo.secret_fill': return await secretFill(secretDeps, server, params);
     case 'flygo.detachAll': await detachAll(server); return { ok: true };
     case 'flygo.fetch': return await fetchForAgent(params?.url, params?.max_bytes);
     default:
@@ -581,6 +594,7 @@ function onFlygo(c, m) {
     }
     case 'update': if (m.required || (m.latest_version && newer(m.latest_version, VERSION))) live.update = m; break;
     case 'notice': live.notice = { text: m.text, at: Date.now() }; break;
+    case 'secret_cancel': secretCancel(m.id); break;
     case 'error': c.error = m.message || m.code; if (m.code === 'outdated') live.update = { required: true, download_url: m.download_url }; break;
   }
   render();
@@ -614,6 +628,7 @@ async function snapshot() {
     version: VERSION, name: st.name, disabled: st.disabled, connected: openConns().length, servers,
     pairings: Object.fromEntries(Object.entries(st.pairings).map(([k, v]) => [k, { name: v.name, slug: v.slug, browser_id: v.browser_id }])),
     control: live.control, attached: attached.size, agentTabs: agentTabs.size, lastError: live.lastError,
+    secrets: { pending: pendingList(), saved: await vaultList().catch(() => []) },
     update: live.update, notice: live.notice && Date.now() - live.notice.at < 60_000 ? live.notice : null, net: await net.summary(),
     localApp: live.localApp ? { server: live.localApp.server, user: live.localApp.user, supported: !!live.localApp.supported,
       choices: (live.localApp.choices || []).map((c) => ({ ...c, connected: !!st.servers[c.url] })) } : null,
@@ -649,6 +664,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         for (const s of list) { closeConn(s, 'logout'); delete st.servers[s]; delete st.pairings[s]; st.blocked[s] = true; }
         await save(); render(); return snapshot();
       }
+      case 'vault_delete': await vaultDelete(String(msg.origin || '')); return snapshot();
       case 'pair_local': {
         live.localApp = await localApp();
         const list = msg.server ? [norm(msg.server)] : (live.localApp?.choices || []).map((c) => c.url).filter((u) => !st.servers[u]);

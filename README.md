@@ -70,6 +70,21 @@ every message goes over it (frames split at 60k characters) and the WebSocket on
 channel closes, traffic falls back to the WebSocket and the extension retries WebRTC later. Reason: a WebSocket behind a
 CDN/proxy can stall when a heavy page streams megabytes of CDP events. The popup shows each server's path (P2P / WS).
 
+## Passwords and one-time codes (0.9.0)
+
+The agent never asks for a password in chat. It calls `browser_ask_secret` on the field; the server asks the extension
+(`flygo.secret_request`), which first tries a password remembered for that origin, else makes a one-time ECDH P-256 key
+pair and returns the public key. The server answers the agent with a link `<server>/__apps/gateway/s/<id>#k=<public key>`
+(the fragment never reaches the server). The browser's owner opens it (signed in to Flygo, same account), types the value;
+the page encrypts it (ECDH → AES-GCM, AAD = request id) and the server relays the ciphertext (`flygo.secret_fill`). The
+extension decrypts, checks that the marked field's frame is still on the requested origin, types the value and answers
+"filled". Optional "remember on this browser" keeps it per origin in `chrome.storage.local`, encrypted with a
+non-extractable key in IndexedDB (Settings in the popup lists and deletes them).
+
+Every message to the server is scrubbed of known secrets (filled values, remembered passwords, current password-field
+values in the tabs the agent uses), because accessibility snapshots, `evaluate` results and network logs can contain them.
+This stops accidental exposure; it cannot stop an agent that deliberately transforms a value in page script.
+
 ## License
 
 Apache-2.0

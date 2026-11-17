@@ -21,6 +21,8 @@
       <div class="pills" id="stats"></div>
     </div>
 
+    <div class="wait hidden" id="secretWait"></div>
+
     <div class="card">
       <label for="name">Tên trình duyệt</label>
       <input id="name" maxlength="60" spellcheck="false" autocomplete="off" placeholder="Đặt tên, vd Chrome văn phòng">
@@ -38,6 +40,10 @@
     <div id="manual" class="card hidden">
       <div class="secHead"><span>Cài đặt</span></div>
       <div id="manage"></div>
+      <div class="hidden" id="vaultBox">
+        <div class="hint">Mật khẩu đã nhớ cho agent (chỉ trên trình duyệt này):</div>
+        <div id="vault"></div>
+      </div>
       <div class="hidden" id="pairApp">
         <div class="hint" id="pairAppHint"></div>
         <button id="doPairApp" class="primary">Kết nối qua Flygo Chat</button>
