@@ -41,3 +41,6 @@ footer { display:flex; gap:8px; padding:10px 14px 12px; }
 footer button { margin-top:0; width:auto; flex:1; font-size:12px; }
 .srv .rm { color:var(--mute); text-decoration:none; padding:0 2px 0 6px; font-size:15px; line-height:1; }
 .srv .rm:hover { color:var(--danger); }
+button.icon { width:auto; margin:0 0 0 4px; padding:4px; background:none; border:1px solid transparent; color:var(--mute); line-height:0; }
+button.icon:hover, button.icon.on { color:var(--accent); border-color:var(--line); }
+.manualHead { font-weight:600; font-size:12px; color:var(--mute); padding-bottom:0; border-bottom:none; }

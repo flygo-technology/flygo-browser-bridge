@@ -17,7 +17,7 @@ function render(s) {
   else if (s.connected) { $('stTitle').textContent = s.connected > 1 ? `Đã kết nối ${s.connected} máy chủ` : 'Đã kết nối'; $('stSub').textContent = servers.filter((x) => x.state === 'online').map((x) => host(x.server)).join(' · '); }
   else if (servers.length) { $('stTitle').textContent = connecting ? 'Đang kết nối…' : 'Mất kết nối'; $('stSub').textContent = s.lastError || 'Đang thử lại…'; }
   else if (s.localApp?.supported) { $('stTitle').textContent = 'Thấy Flygo Chat trên máy'; $('stSub').textContent = s.lastError || pending.map((c) => host(c.url)).join(' · '); }
-  else { $('stTitle').textContent = 'Chưa kết nối'; $('stSub').textContent = s.lastError || 'Mở Flygo Chat trên máy này, hoặc đăng nhập máy chủ bên dưới.'; }
+  else { $('stTitle').textContent = 'Chưa kết nối'; $('stSub').textContent = s.lastError || 'Mở Flygo Chat trên máy này để tự kết nối.'; }
 
   $('control').classList.toggle('hidden', !ctl.length);
   $('ctlWho').innerHTML = ctl.map(([srv, c]) => `<div><b>${esc(c.agent || 'agent')}</b>${c.machine ? ` @ ${esc(c.machine)}` : ''} <span style="color:var(--mute)">· ${esc(host(srv))}</span></div>`).join('');
@@ -50,6 +50,7 @@ function render(s) {
 
 async function refresh() { render(await ask({ type: 'get' })); }
 chrome.runtime.onMessage.addListener((m) => { if (m?.type === 'state') void refresh(); });
+$('gear').onclick = () => { const m = $('manual'); m.classList.toggle('hidden'); $('gear').classList.toggle('on', !m.classList.contains('hidden')); };
 $('stop').onclick = async () => render(await ask({ type: 'stop' }));
 $('toggle').onclick = async () => render(await ask({ type: 'toggle' }));
 $('share').onclick = async () => render(await ask({ type: 'share_tab' }));

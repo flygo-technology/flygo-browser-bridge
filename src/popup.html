@@ -5,6 +5,7 @@
     <img src="icons/32.png" alt="" width="20" height="20">
     <div class="title">Flygo Browser Bridge</div>
     <div class="ver" id="ver"></div>
+    <button id="gear" class="icon" title="Cấu hình thủ công" aria-label="Cấu hình thủ công"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
   </header>
   <section class="status" id="status"><i class="dot"></i><div><b id="stTitle">…</b><small id="stSub"></small></div></section>
   <section class="control hidden" id="control">
@@ -20,6 +21,8 @@
   <section class="servers" id="servers"></section>
   <section class="stats" id="stats"></section>
   <section class="notice hidden" id="notice"></section>
+  <div id="manual" class="hidden">
+    <section class="manualHead">Cấu hình thủ công</section>
   <section class="hidden" id="pairApp">
     <div class="hint" id="pairAppHint"></div>
     <button id="doPairApp" class="primary">Kết nối qua Flygo Chat</button>
@@ -29,6 +32,7 @@
     <input id="server" placeholder="chat.congty.vn" spellcheck="false">
     <button id="doLogin" class="primary">Đăng nhập Flygo</button>
   </section>
+  </div>
   <footer>
     <button id="share">Đưa tab này cho agent</button>
     <button id="toggle">Ngắt</button>
