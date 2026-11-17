@@ -75,7 +75,7 @@ CDN/proxy can stall when a heavy page streams megabytes of CDP events. The popup
 The agent never asks for a password in chat. It calls `browser_ask_secret` on the field; the server asks the extension
 (`flygo.secret_request`), which first tries a password remembered for that origin, else makes a one-time ECDH P-256 key
 pair and returns the public key. The server answers the agent with a link `<server>/__apps/gateway/s/<id>#k=<public key>`
-(the fragment never reaches the server). The browser's owner opens it (signed in to Flygo, same account), types the value;
+(the fragment never reaches the server). The browser's owner opens it (holding the link is the permission: random 128-bit id, key in the fragment, 5 minutes, one value, at most 5 tries), types the value;
 the page encrypts it (ECDH → AES-GCM, AAD = request id) and the server relays the ciphertext (`flygo.secret_fill`). The
 extension decrypts, checks that the marked field's frame is still on the requested origin, types the value and answers
 "filled". Optional "remember on this browser" keeps it per origin in `chrome.storage.local`, encrypted with a
