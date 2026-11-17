@@ -33,16 +33,17 @@ let partSeq = 0;
 const parts = new Map();
 
 const loaded = (async () => {
-  const s = await chrome.storage.local.get(['extId', 'name', 'pairings', 'direct', 'disabled', 'noAutoPair']);
+  const s = await chrome.storage.local.get(['extId', 'name', 'pairings', 'direct', 'disabled', 'noAutoPair', 'lastServer']);
   st.extId = s.extId || randomId();
   st.name = s.name || '';
   st.pairings = s.pairings || {};
   st.direct = s.direct || null;
   st.disabled = !!s.disabled;
   st.noAutoPair = !!s.noAutoPair;
+  st.lastServer = s.lastServer || null;
   if (!s.extId) await chrome.storage.local.set({ extId: st.extId });
 })();
-const save = () => chrome.storage.local.set({ name: st.name, pairings: st.pairings, direct: st.direct, disabled: st.disabled, noAutoPair: st.noAutoPair });
+const save = () => chrome.storage.local.set({ name: st.name, pairings: st.pairings, direct: st.direct, disabled: st.disabled, noAutoPair: st.noAutoPair, lastServer: st.lastServer || null });
 
 function randomId() {
   const b = crypto.getRandomValues(new Uint8Array(18));
@@ -216,21 +217,49 @@ async function localApp() {
   try {
     const r = await fetch(`${LOCAL_APP}/flygo/hello`, { signal: AbortSignal.timeout(1500), cache: 'no-store', headers: { 'X-Flygo-Bridge': chrome.runtime.id } });
     const j = r.ok ? await r.json() : null;
-    return j?.role === 'pairing' && j.server ? j : null;
+    if (j?.role !== 'pairing' || !j.server) return null;
+    // Flygo Chat may be signed in to several servers; only those with the Gateway bridge can take this browser.
+    const list = Array.isArray(j.servers) && j.servers.length ? j.servers : [{ url: j.server, current: true }];
+    j.choices = [];
+    for (const x of list) if (x?.url && await hasBridge(String(x.url))) j.choices.push({ url: String(x.url).replace(/\/+$/, ''), name: x.name || '', current: !!x.current });
+    j.supported = j.choices.length > 0;
+    return j;
   } catch { return null; }
+}
+const bridgeCache = new Map();
+async function hasBridge(server) {
+  const c = bridgeCache.get(server);
+  if (c && Date.now() - c.at < 10 * 60_000) return c.ok;
+  let ok = false;
+  try {
+    const r = await fetch(`${server.replace(/\/+$/, '')}/__apps/gateway/healthz`, { signal: AbortSignal.timeout(5000), cache: 'no-store' });
+    ok = r.ok && (await r.json().catch(() => null))?.ok === true;
+  } catch {}
+  bridgeCache.set(server, { ok, at: Date.now() });
+  return ok;
+}
+
+/** Server to pair with: the one chosen before, else the app's open server, else the first with a bridge. */
+function pickServer(app, wanted) {
+  const c = app?.choices || [];
+  return (wanted && c.find((x) => x.url === wanted)) || (st.lastServer && c.find((x) => x.url === st.lastServer)) || c.find((x) => x.current) || c[0] || null;
 }
 
 /** Pair with the Flygo Chat app signed in on this machine (no sign-in needed). */
-async function pairLocal() {
+async function pairLocal(wanted) {
+  const app = live.localApp || await localApp();
+  const target = pickServer(app, wanted);
+  if (!target) throw new Error('Flygo Chat trên máy chưa đăng nhập máy chủ nào có bridge');
   const r = await fetch(`${LOCAL_APP}/flygo/pair`, {
     method: 'POST', signal: AbortSignal.timeout(20_000), headers: { 'Content-Type': 'application/json', 'X-Flygo-Bridge': chrome.runtime.id },
-    body: JSON.stringify({ client: await browserInfo(), replace: Object.values(st.pairings)[0]?.browser_id }),
+    body: JSON.stringify({ server: target.url, client: await browserInfo(), replace: st.pairings[target.url]?.browser_id }),
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok || !j.token || !j.ws_url) throw new Error(j.error || `Flygo Chat từ chối ghép (${r.status})`);
   const server = String(j.server).replace(/\/+$/, '');
   st.pairings[server] = { browser_id: j.client?.id, token: j.token, name: j.client?.name, slug: j.client?.slug };
   st.direct = { server, ws_url: j.ws_url, user: j.user || null };
+  st.lastServer = server;
   st.noAutoPair = false;
   if (!st.name && j.client?.name) st.name = j.client.name;
   await save();
@@ -246,7 +275,7 @@ async function tick() {
   // Not signed in: if Flygo Chat runs on this machine, pair with it automatically.
   const app = await localApp();
   live.localApp = app;
-  if (app && !st.noAutoPair && !live.pairing) {
+  if (app?.supported && !st.noAutoPair && !live.pairing) {
     live.pairing = true;
     try { await pairLocal(); return connect('direct'); }
     catch (e) { live.lastError = String(e?.message || e); }
@@ -361,7 +390,8 @@ async function snapshot() {
     control: live.control, attached: attached.size, agentTabs: agentTabs.size, rtt: live.rtt, lastError: live.lastError,
     update: live.update, notice: live.notice && Date.now() - live.notice.at < 60_000 ? live.notice : null,
     direct: st.direct ? { server: st.direct.server, user: st.direct.user || null } : null, net: await net.summary(),
-    localApp: live.localApp ? { server: live.localApp.server, user: live.localApp.user } : null,
+    localApp: live.localApp ? { server: live.localApp.server, user: live.localApp.user, supported: !!live.localApp.supported, choices: live.localApp.choices || [] } : null,
+    lastServer: st.lastServer || null,
   };
 }
 function render() { refreshBadge(); chrome.runtime.sendMessage({ type: 'state' }).catch(() => {}); }
@@ -388,7 +418,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       case 'toggle': st.disabled = !st.disabled; await save(); if (st.disabled) { closeWs('disabled'); await detachAll(); } void tick(); return snapshot();
       case 'login': await login(String(msg.server || '')); void tick(); return snapshot();
       case 'logout': if (st.direct) { delete st.pairings[st.direct.server]; st.direct = null; st.noAutoPair = true; await save(); closeWs('logout'); } return snapshot();
-      case 'pair_local': st.noAutoPair = false; await save(); await pairLocal(); void tick(); return snapshot();
+      case 'pair_local': st.noAutoPair = false; await save(); live.localApp = await localApp(); await pairLocal(msg.server || null); void tick(); return snapshot();
     }
   })().then(reply, (e) => reply({ error: String(e?.message || e) }));
   return true;
@@ -418,6 +448,8 @@ async function login(serverInput) {
   const c = j.client || j.browser;
   st.pairings[server] = { browser_id: c.id, token: j.token, name: c.name, slug: c.slug };
   st.direct = { server, ws_url: j.ws_url, user: j.user?.name || null };
+  st.lastServer = server;
+  st.noAutoPair = false;
   if (!st.name) st.name = c.name;
   await save();
   live.notice = { text: `Signed in to ${u.host} as ${j.user?.name || 'you'}.`, at: Date.now() };

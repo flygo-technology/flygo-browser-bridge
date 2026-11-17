@@ -2,36 +2,38 @@
 <html lang="vi"><head><meta charset="utf-8"><title>Flygo Browser Bridge</title><link rel="stylesheet" href="popup.css"></head>
 <body>
   <header>
-    <div class="logo">FLYGO<span>//</span>BRIDGE</div>
+    <img src="icons/32.png" alt="" width="20" height="20">
+    <div class="title">Flygo Browser Bridge</div>
     <div class="ver" id="ver"></div>
   </header>
-  <section class="status" id="status"><i class="dot"></i><b id="stTitle">…</b><small id="stSub"></small></section>
+  <section class="status" id="status"><i class="dot"></i><div><b id="stTitle">…</b><small id="stSub"></small></div></section>
   <section class="control hidden" id="control">
-    <div class="glitch" data-t="AI ĐANG ĐIỀU KHIỂN">AI ĐANG ĐIỀU KHIỂN</div>
+    <div class="ctlHead">AI đang điều khiển</div>
     <div id="ctlWho"></div>
-    <button id="stop" class="danger">■ DỪNG</button>
+    <button id="stop" class="danger">Dừng</button>
   </section>
-  <section class="name">
-    <label>TÊN</label>
+  <section>
+    <label for="name">Tên trình duyệt</label>
     <input id="name" maxlength="60" spellcheck="false" placeholder="vd Chrome văn phòng">
     <div class="tag" id="tag"></div>
   </section>
   <section class="servers" id="servers"></section>
   <section class="stats" id="stats"></section>
   <section class="notice hidden" id="notice"></section>
-  <section class="login hidden" id="pairApp">
+  <section class="hidden" id="pairApp">
     <div class="hint" id="pairAppHint"></div>
-    <button id="doPairApp">KẾT NỐI QUA FLYGO CHAT</button>
+    <select id="pairServer" class="hidden"></select>
+    <button id="doPairApp" class="primary">Kết nối qua Flygo Chat</button>
   </section>
-  <section class="login hidden" id="login">
-    <div class="hint">Địa chỉ máy chủ Flygo Chat của bạn:</div>
+  <section class="hidden" id="login">
+    <div class="hint" id="loginHint">Địa chỉ máy chủ Flygo Chat của bạn:</div>
     <input id="server" placeholder="chat.congty.vn" spellcheck="false">
-    <button id="doLogin">ĐĂNG NHẬP FLYGO</button>
+    <button id="doLogin" class="primary">Đăng nhập Flygo</button>
   </section>
   <footer>
-    <button id="share" class="ghost">⇪ ĐƯA TAB NÀY CHO AGENT</button>
-    <button id="toggle" class="ghost">NGẮT</button>
-    <button id="logout" class="ghost hidden">ĐĂNG XUẤT</button>
+    <button id="share">Đưa tab này cho agent</button>
+    <button id="toggle">Ngắt</button>
+    <button id="logout" class="hidden">Đăng xuất</button>
   </footer>
   <script src="popup.js" type="module"></script>
 </body></html>
