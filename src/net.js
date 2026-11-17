@@ -396,10 +396,12 @@ function cdpType(t) {
 }
 
 // ---------------------------------------------------------------- sandbox for script rules
+// One offscreen document for both jobs: the rule-script sandbox and the WebRTC link (service workers have no RTCPeerConnection).
 let offscreenReady = null;
-async function ensureOffscreen() {
+export async function ensureOffscreen() {
   if (await chrome.offscreen.hasDocument?.()) return;
-  offscreenReady ||= chrome.offscreen.createDocument({ url: 'offscreen.html', reasons: ['IFRAME_SCRIPTING'], justification: 'Run network rule scripts written by the agent in a sandboxed iframe' })
+  offscreenReady ||= chrome.offscreen.createDocument({ url: 'offscreen.html', reasons: ['IFRAME_SCRIPTING', 'WEB_RTC'],
+    justification: 'Run network rule scripts written by the agent in a sandboxed iframe; hold the direct WebRTC link to the Flygo server' })
     .finally(() => { offscreenReady = null; });
   await offscreenReady;
 }

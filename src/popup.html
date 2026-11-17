@@ -2,40 +2,51 @@
 <html lang="vi"><head><meta charset="utf-8"><title>Flygo Browser Bridge</title><link rel="stylesheet" href="popup.css"></head>
 <body>
   <header>
-    <img src="icons/32.png" alt="" width="20" height="20">
-    <div class="title">Flygo Browser Bridge</div>
-    <div class="ver" id="ver"></div>
-    <button id="gear" class="icon" title="Cấu hình thủ công" aria-label="Cấu hình thủ công"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+    <img class="logo" src="icons/48.png" alt="" width="30" height="30">
+    <div class="brand"><div class="title">Flygo Browser Bridge</div><div class="ver" id="ver"></div></div>
+    <button id="gear" class="icon" title="Cài đặt" aria-label="Cài đặt"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
   </header>
-  <section class="status" id="status"><i class="dot"></i><div><b id="stTitle">…</b><small id="stSub"></small></div></section>
-  <section class="control hidden" id="control">
-    <div class="ctlHead">AI đang điều khiển</div>
-    <div id="ctlWho"></div>
-    <button id="stop" class="danger">Dừng</button>
-  </section>
-  <section>
-    <label for="name">Tên trình duyệt</label>
-    <input id="name" maxlength="60" spellcheck="false" placeholder="vd Chrome văn phòng">
-    <div class="tag" id="tag"></div>
-  </section>
-  <section class="servers" id="servers"></section>
-  <section class="stats" id="stats"></section>
-  <section class="notice hidden" id="notice"></section>
-  <div id="manual" class="hidden">
-    <section class="manualHead">Cấu hình thủ công</section>
-  <section class="hidden" id="pairApp">
-    <div class="hint" id="pairAppHint"></div>
-    <button id="doPairApp" class="primary">Kết nối qua Flygo Chat</button>
-  </section>
-  <section class="hidden" id="login">
-    <div class="hint" id="loginHint">Thêm máy chủ Flygo Chat:</div>
-    <input id="server" placeholder="chat.congty.vn" spellcheck="false">
-    <button id="doLogin" class="primary">Đăng nhập Flygo</button>
-  </section>
-  </div>
-  <footer>
-    <button id="toggle">Ngắt</button>
-    <button id="logout" class="hidden">Đăng xuất hết</button>
-  </footer>
+
+  <main>
+    <div class="card status" id="status">
+      <div class="stRow">
+        <i class="dot"></i>
+        <div class="stText"><b id="stTitle">…</b><small id="stSub"></small></div>
+      </div>
+      <div class="ctl hidden" id="control">
+        <div id="ctlWho"></div>
+        <button id="stop" class="stop"><svg width="10" height="10" viewBox="0 0 10 10"><rect width="10" height="10" rx="1.5" fill="currentColor"/></svg>Dừng</button>
+      </div>
+      <button id="resume" class="primary hidden">Nối lại</button>
+      <div class="pills" id="stats"></div>
+    </div>
+
+    <div class="card">
+      <label for="name">Tên trình duyệt</label>
+      <input id="name" maxlength="60" spellcheck="false" autocomplete="off" placeholder="Đặt tên, vd Chrome văn phòng">
+      <div class="tag" id="tag"></div>
+      <div class="nameHint hidden" id="nameHint">Gõ tên rồi nhấn Enter. Trong chat, agent gọi trình duyệt này bằng tag sinh từ tên.</div>
+    </div>
+
+    <div class="card">
+      <div class="secHead"><span>Máy chủ tự kết nối</span><span class="count" id="srvCount"></span></div>
+      <div id="servers"></div>
+    </div>
+
+    <div class="notice hidden" id="notice"></div>
+
+    <div id="manual" class="card hidden">
+      <div class="secHead"><span>Cài đặt</span></div>
+      <div id="manage"></div>
+      <div class="hidden" id="pairApp">
+        <div class="hint" id="pairAppHint"></div>
+        <button id="doPairApp" class="primary">Kết nối qua Flygo Chat</button>
+      </div>
+      <div class="hidden" id="login">
+        <div class="hint">Thêm máy chủ Flygo Chat thủ công:</div>
+        <div class="addRow"><input id="server" placeholder="chat.congty.vn" spellcheck="false"><button id="doLogin" class="primary">Đăng nhập</button></div>
+      </div>
+    </div>
+  </main>
   <script src="popup.js" type="module"></script>
 </body></html>

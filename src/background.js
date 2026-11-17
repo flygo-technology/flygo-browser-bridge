@@ -5,11 +5,12 @@
 // declares the tools it runs itself (network log / rules / download). It connects to EVERY Flygo server it is paired with
 // (Flygo Chat on this machine signed in to several servers → one connection per server that has the bridge); each server's
 // agents work in the tabs they opened.
-import { Net } from './net.js';
+import { Net, ensureOffscreen } from './net.js';
 import { DECLARED_TOOLS, NET_OPS } from './tools.js';
 
 const VERSION = chrome.runtime.getManifest().version;
 const PING_MS = 20_000;
+const DC_PART = 60_000;  // WebRTC messages are capped near 256 KB of UTF-8
 const PART = 200_000;
 
 // ------------------------------------------------------------------ state
@@ -22,7 +23,8 @@ const st = {
   disabled: false,      // user pressed "Disconnect"
 };
 const live = { control: {}, lastError: null, update: null, notice: null, localApp: null, pairing: false };
-const conns = new Map();      // server url -> {ws, state, rtt, pingAt, pingTimer, error}
+const conns = new Map();      // server url -> {ws, state, rtt, pingAt, pingTimer, error, since}
+const activity = new Map();   // server url -> last time an agent used this browser through it (popup "last activity")
 const attached = new Set();   // tab ids with the debugger attached (any server)
 const tabOwner = new Map();   // tab id -> server url whose agent controls it
 const attaching = new Map();  // tab id -> pending chrome.debugger.attach
@@ -73,22 +75,35 @@ const net = new Net({
 });
 
 // ------------------------------------------------------------------ framing
+// Everything goes over the direct WebRTC channel when it is open (c.dc), else over the WebSocket.
 function sendTo(c, obj) {
+  if (c?.dc && rtcPort) {
+    const id = c.server;
+    return frame(obj, DC_PART, (s) => rtcPort.postMessage({ op: 'send', id, s }));
+  }
+  sendWs(c, obj);
+}
+/** WebSocket only (WebRTC handshake, keep-alive). */
+function sendWs(c, obj) {
   const ws = c?.ws;
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  frame(obj, PART, (s) => ws.send(s));
+}
+function frame(obj, part, out) {
   const s = JSON.stringify(obj);
-  if (s.length <= PART) return ws.send(s);
-  const k = `e${++partSeq}`, n = Math.ceil(s.length / PART);
-  for (let i = 0; i < n; i++) ws.send(JSON.stringify({ t: 'part', k, i, n, d: s.slice(i * PART, (i + 1) * PART) }));
+  if (s.length <= part) return out(s);
+  const k = `e${++partSeq}`, n = Math.ceil(s.length / part);
+  for (let i = 0; i < n; i++) out(JSON.stringify({ t: 'part', k, i, n, d: s.slice(i * part, (i + 1) * part) }));
 }
 const sendAll = (obj) => { for (const c of conns.values()) sendTo(c, obj); };
-function joinPart(m) {
+function joinPart(m, server) {
   if (m?.t !== 'part') return m;
-  let p = parts.get(m.k);
-  if (!p) parts.set(m.k, (p = { n: m.n, got: 0, d: [] }));
+  const key = `${server} ${m.k}`;
+  let p = parts.get(key);
+  if (!p) parts.set(key, (p = { n: m.n, got: 0, d: [] }));
   if (p.d[m.i] === undefined) { p.d[m.i] = m.d; p.got++; }
   if (p.got < p.n) return null;
-  parts.delete(m.k);
+  parts.delete(key);
   return JSON.parse(p.d.join(''));
 }
 
@@ -393,6 +408,7 @@ function closeConn(server, reason) {
   if (!c) return;
   conns.delete(server);
   if (c.pingTimer) clearInterval(c.pingTimer);
+  rtcClose(c);
   try { c.ws?.close(1000, reason); } catch {}
   delete live.control[server];
   void detachAll(server);
@@ -424,35 +440,31 @@ async function tick() {
 
 function connect(server) {
   const info = st.servers[server];
-  const c = { server, ws: null, state: 'connecting', rtt: null, pingAt: 0, pingTimer: null, error: null };
+  const c = { server, ws: null, state: 'connecting', rtt: null, pingAt: 0, pingTimer: null, error: null, since: null, dc: false, rtc: null };
   conns.set(server, c);
   let ws;
   try { ws = new WebSocket(info.ws_url); } catch (e) { c.state = 'error'; c.error = String(e?.message || e); conns.delete(server); return; }
   c.ws = ws;
   ws.onopen = async () => {
-    c.state = 'open'; c.error = null;
+    c.state = 'open'; c.error = null; c.since = Date.now();
     const bi = await browserInfo();
     ws.send(JSON.stringify({
       t: 'hello', token: st.pairings[server]?.token,
       client: { type: 'extension', kind: 'browser', name: st.name || bi.engine, version: VERSION, engine: bi.engine, os: bi.os },
       tools: DECLARED_TOOLS, capabilities: ['cdp'], exclusive: true, info: bi,
     }));
-    c.pingTimer = setInterval(() => { c.pingAt = Date.now(); sendTo(c, { t: 'ping' }); }, PING_MS);
+    c.pingTimer = setInterval(() => {
+      c.pingAt = Date.now(); sendTo(c, { t: 'ping' });
+      if (c.dc) sendWs(c, { t: 'ka' }); // keeps the idle WebSocket (signalling + fallback) from being cut by proxies
+    }, PING_MS);
     render();
   };
-  ws.onmessage = (ev) => {
-    let m;
-    try { m = joinPart(JSON.parse(ev.data)); } catch { return; }
-    if (!m) return;
-    if (m.t) return onFlygo(c, m);
-    if (m.id !== undefined && m.method) {
-      rpc(server, m.method, m.params).then((result) => sendTo(c, { id: m.id, result: result ?? {} }), (e) => sendTo(c, { id: m.id, error: { message: String(e?.message || e) } }));
-    }
-  };
+  ws.onmessage = (ev) => incoming(c, ev.data);
   ws.onclose = (ev) => {
     if (conns.get(server) !== c) return;
     conns.delete(server);
     if (c.pingTimer) clearInterval(c.pingTimer);
+    rtcClose(c);
     delete live.control[server];
     void detachAll(server);
     if (ev.code === 4401 || ev.code === 4403) {
@@ -464,6 +476,71 @@ function connect(server) {
     setTimeout(() => void tick(), 3000 + Math.random() * 3000);
   };
   ws.onerror = () => { c.error = 'Không nối được máy chủ, đang thử lại…'; };
+}
+
+/** A message from the server, over the WebSocket or the WebRTC channel. */
+function incoming(c, raw) {
+  if (conns.get(c.server) !== c) return;
+  let m;
+  try { m = joinPart(JSON.parse(raw), c.server); } catch { return; }
+  if (!m) return;
+  if (m.t) return onFlygo(c, m);
+  if (m.id !== undefined && m.method) {
+    activity.set(c.server, Date.now());
+    rpc(c.server, m.method, m.params).then((result) => sendTo(c, { id: m.id, result: result ?? {} }), (e) => sendTo(c, { id: m.id, error: { message: String(e?.message || e) } }));
+  }
+}
+
+// ------------------------------------------------------------------ direct WebRTC channel (P2P)
+// The WebSocket often goes through a CDN/proxy that stalls when a heavy page pushes megabytes of CDP events. A server
+// that offers WebRTC (welcome.rtc) gets a data channel straight to it; the WebSocket stays for the handshake and fallback.
+let rtcPort = null;
+async function rtcConnect() {
+  if (rtcPort) return rtcPort;
+  await ensureOffscreen();
+  if (rtcPort) return rtcPort;
+  const port = chrome.runtime.connect({ name: 'rtc' });
+  rtcPort = port;
+  port.onDisconnect.addListener(() => {
+    if (rtcPort === port) rtcPort = null;
+    for (const c of conns.values()) if (c.rtc) { c.rtc = null; if (c.dc) { c.dc = false; render(); } rtcRetry(c); }
+  });
+  port.onMessage.addListener((m) => {
+    const c = conns.get(m.id);
+    if (!c?.rtc) { if (m.ev !== 'close') port.postMessage({ op: 'close', id: m.id }); return; }
+    switch (m.ev) {
+      case 'offer': sendWs(c, { t: 'rtc_offer', sdp: m.sdp }); break;
+      case 'cand': sendWs(c, { t: 'rtc_cand', candidate: m.candidate, mid: m.mid }); break;
+      case 'open': c.dc = true; c.rtc.tries = 0; render(); break;
+      case 'msg': incoming(c, m.d); break;
+      case 'close': {
+        const was = c.dc;
+        c.dc = false; c.rtc = null;
+        if (was) render();
+        rtcRetry(c);
+        break;
+      }
+    }
+  });
+  return port;
+}
+async function rtcStart(c, iceServers) {
+  if (c.rtc || conns.get(c.server) !== c) return;
+  c.rtc = { iceServers, tries: (c.rtcTries || 0) + 1 };
+  c.rtcTries = c.rtc.tries;
+  try { (await rtcConnect()).postMessage({ op: 'open', id: c.server, iceServers: iceServers || [] }); }
+  catch { c.rtc = null; }
+}
+function rtcClose(c) {
+  if (c.rtc && rtcPort) try { rtcPort.postMessage({ op: 'close', id: c.server }); } catch {}
+  c.rtc = null; c.dc = false;
+}
+/** Channel gone or never opened: the WebSocket carries on; try again later (backs off up to 5 min). */
+function rtcRetry(c) {
+  if (!c.rtcOffer || conns.get(c.server) !== c || c.state !== 'open') return;
+  const wait = Math.min(300_000, 15_000 * 2 ** Math.min(4, (c.rtcTries || 1) - 1));
+  clearTimeout(c.rtcTimer);
+  c.rtcTimer = setTimeout(() => void rtcStart(c, c.rtcOffer.ice_servers), wait);
 }
 
 function onFlygo(c, m) {
@@ -478,8 +555,11 @@ function onFlygo(c, m) {
         void save();
       }
       if (m.latest_version && newer(m.latest_version, VERSION)) live.update = { latest_version: m.latest_version, download_url: m.download_url };
+      if (m.rtc) { c.rtcOffer = m.rtc; void rtcStart(c, m.rtc.ice_servers); }
       break;
     }
+    case 'rtc_answer': if (c.rtc && rtcPort) rtcPort.postMessage({ op: 'answer', id: c.server, sdp: m.sdp }); return;
+    case 'rtc_cand': if (c.rtc && rtcPort) rtcPort.postMessage({ op: 'cand', id: c.server, candidate: m.candidate, mid: m.mid }); return;
     case 'renamed':
       st.pairings[server] = { ...st.pairings[server], name: m.name, slug: m.slug };
       st.name = m.name;
@@ -526,7 +606,9 @@ async function snapshot() {
   await loaded;
   const servers = Object.entries(st.servers).map(([server, info]) => {
     const c = conns.get(server);
-    return { server, user: info?.user || null, state: c ? (c.state === 'open' ? 'online' : 'connecting') : 'offline', rtt: c?.rtt ?? null, error: c?.error ?? null, slug: st.pairings[server]?.slug || null };
+    const state = !c ? (st.disabled ? 'offline' : 'error') : c.state === 'open' ? 'online' : c.error ? 'error' : 'connecting';
+    return { server, user: info?.user || null, state, rtt: c?.rtt ?? null, error: c?.error ?? null, slug: st.pairings[server]?.slug || null,
+      since: c?.since ?? null, lastAt: activity.get(server) ?? null, path: c?.state === 'open' ? (c.dc ? 'p2p' : 'ws') : null };
   });
   return {
     version: VERSION, name: st.name, disabled: st.disabled, connected: openConns().length, servers,

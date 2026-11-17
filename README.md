@@ -63,6 +63,13 @@ events `{method, params}` (`chrome.debugger.onEvent|onDetach`, `chrome.tabs.onCr
 split into `{t:"part", k, i, n, d}` frames. The device token comes from signing in (`/login` → Flygo ID → one-time code +
 PKCE → `/api/pair-code`) and can be revoked from Flygo Chat (Settings › My browsers).
 
+**Direct WebRTC channel (0.8.0).** When `welcome` carries `rtc: {ice_servers}`, the extension opens a WebRTC data channel to
+the server (in the offscreen document, since service workers have no `RTCPeerConnection`): `{t:"rtc_offer", sdp}` →
+`{t:"rtc_answer", sdp}`, then `{t:"rtc_cand", candidate, mid}` both ways, all over the WebSocket. Once the channel is open,
+every message goes over it (frames split at 60k characters) and the WebSocket only carries a keep-alive `{t:"ka"}`. If the
+channel closes, traffic falls back to the WebSocket and the extension retries WebRTC later. Reason: a WebSocket behind a
+CDN/proxy can stall when a heavy page streams megabytes of CDP events. The popup shows each server's path (P2P / WS).
+
 ## License
 
 Apache-2.0
