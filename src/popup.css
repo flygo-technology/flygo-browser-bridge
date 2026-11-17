@@ -39,3 +39,5 @@ button.primary { background:var(--accent); color:var(--accent-ink); border-color
 button.danger { background:var(--danger); color:#fff; border-color:var(--danger); margin-top:0; }
 footer { display:flex; gap:8px; padding:10px 14px 12px; }
 footer button { margin-top:0; width:auto; flex:1; font-size:12px; }
+.srv .rm { color:var(--mute); text-decoration:none; padding:0 2px 0 6px; font-size:15px; line-height:1; }
+.srv .rm:hover { color:var(--danger); }
