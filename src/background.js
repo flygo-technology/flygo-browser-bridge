@@ -135,6 +135,7 @@ async function rpc(server, method, params) {
     case 'chrome.debugger.sendCommand': {
       const [target, m, p] = params;
       if (tabOwner.get(target.tabId) !== server) throw new Error('Tab không thuộc phiên điều khiển này');
+      if (m === 'Input.dispatchMouseEvent' && !target.sessionId) void cursor(target.tabId, p);
       // Playwright's own Fetch interception is merged with our network rules (one debugger session per tab).
       if (!target.sessionId && (m === 'Fetch.enable' || m === 'Fetch.disable')) return net.pwFetch(target.tabId, m, p);
       return await chrome.debugger.sendCommand(target, m, p);
@@ -156,13 +157,14 @@ async function rpc(server, method, params) {
       return {};
     }
     case 'flygo.tabs': {
-      // Tabs this server's agent may use: every debuggable tab not held by another server.
+      // Tabs this server's agent may use: every debuggable tab not held by another server (active_only: the tab(s) the
+      // user is looking at, attached when a session starts; others on demand with browser_tab_attach).
       const out = [];
-      for (const t of await chrome.tabs.query({})) {
+      for (const t of await chrome.tabs.query(params?.active_only ? { active: true } : {})) {
         if (t.id === undefined || /^(chrome|edge|devtools|chrome-extension):/i.test(t.url || '')) continue;
         const o = tabOwner.get(t.id);
         if (o && o !== server && (attached.has(t.id) || attaching.has(t.id))) continue;
-        out.push({ id: t.id, url: t.url, title: t.title });
+        out.push({ id: t.id, url: t.url, title: t.title, active: !!t.active, used_by_agent: attached.has(t.id) });
       }
       return out;
     }
@@ -242,17 +244,8 @@ chrome.tabs.onCreated.addListener((tab) => {
   if (owner) { agentTabs.add(tab.id); tabOwner.set(tab.id, owner); void addToGroup(tab.id); sendTo(conns.get(owner), { method: 'chrome.tabs.onCreated', params: [tab] }); }
   // Created by an agent (chrome.tabs.create in progress): that server already knows it.
   else if (creatingFor) { tabOwner.set(tab.id, creatingFor); agentTabs.add(tab.id); }
-  // Tab the user opens: every connected server's agent may use it (first to attach keeps it).
-  else sendAll({ method: 'chrome.tabs.onCreated', params: [{ ...tab, flygoShared: true }] });
+  // Tabs the user opens are listed by browser_tabs_all; an agent takes one with browser_tab_attach.
 });
-
-/** All the user's tabs are available to agents: tell a server about every tab that can be debugged. */
-async function shareAllTabs(c) {
-  for (const t of await chrome.tabs.query({})) {
-    if (t.id === undefined || /^(chrome|edge|devtools|chrome-extension):/i.test(t.url || '')) continue;
-    sendTo(c, { method: 'chrome.tabs.onCreated', params: [{ ...t, openerTabId: undefined, flygoShared: true }] });
-  }
-}
 
 // ------------------------------------------------------------------ "agent is controlling" effect in the page
 // Glowing border + small label, pointer-events none and aria-hidden: doesn't block the agent or change what it reads.
@@ -279,6 +272,43 @@ function overlayFn(on, label) {
   }
   if (host.__t) host.__t.textContent = label;
 }
+// Fake cursor: follows the agent's mouse events (CSS px, viewport coordinates, same as CDP) and ripples on click.
+function cursorFn(x, y, type) {
+  const ID = '__flygo_bridge_cursor__';
+  let host = document.getElementById(ID);
+  if (!host) {
+    host = document.createElement('div');
+    host.id = ID;
+    host.setAttribute('aria-hidden', 'true');
+    host.style.cssText = 'all:initial;position:fixed;left:0;top:0;width:0;height:0;z-index:2147483647;pointer-events:none;';
+    const root = host.attachShadow({ mode: 'closed' });
+    root.innerHTML = `<style>
+      .c{position:fixed;left:0;top:0;width:22px;height:22px;transition:transform .35s cubic-bezier(.2,.8,.2,1);filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))}
+      .r{position:fixed;width:36px;height:36px;margin:-18px 0 0 -18px;border-radius:50%;border:3px solid #1a73e8;opacity:0;pointer-events:none}
+      .r.go{animation:rp .55s ease-out}
+      @keyframes rp{0%{transform:scale(.2);opacity:.9}100%{transform:scale(1.6);opacity:0}}
+    </style><svg class="c" viewBox="0 0 24 24"><path d="M3 2l7.5 19 2.4-7.6L20.5 11z" fill="#1a73e8" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg><div class="r"></div>`;
+    host.__c = root.querySelector('.c'); host.__r = root.querySelector('.r');
+    (document.documentElement || document.body).appendChild(host);
+  }
+  host.__c.style.transform = `translate(${x - 3}px, ${y - 2}px)`;
+  if (type === 'mousePressed') {
+    const r = host.__r;
+    r.style.left = `${x}px`; r.style.top = `${y}px`;
+    r.classList.remove('go'); void r.offsetWidth; r.classList.add('go');
+  }
+  clearTimeout(host.__hide);
+  host.style.display = '';
+  host.__hide = setTimeout(() => { host.style.display = 'none'; }, 8000);
+}
+let cursorBusy = 0;
+async function cursor(tabId, p) {
+  if (!p || typeof p.x !== 'number') return;
+  if (p.type === 'mouseMoved' && Date.now() - cursorBusy < 40) return; // drop extra moves
+  cursorBusy = Date.now();
+  try { await chrome.scripting.executeScript({ target: { tabId }, func: cursorFn, args: [p.x, p.y, p.type], world: 'ISOLATED' }); } catch {}
+}
+
 async function overlay(tabId, on, label = '') {
   try { await chrome.scripting.executeScript({ target: { tabId }, func: overlayFn, args: [on, label], world: 'ISOLATED' }); } catch {}
 }
@@ -448,7 +478,6 @@ function onFlygo(c, m) {
         void save();
       }
       if (m.latest_version && newer(m.latest_version, VERSION)) live.update = { latest_version: m.latest_version, download_url: m.download_url };
-      void shareAllTabs(c);
       break;
     }
     case 'renamed':
