@@ -44,6 +44,7 @@ function render(s) {
   else { $('stTitle').textContent = 'Chưa kết nối'; $('stSub').textContent = s.lastError || 'Mở Flygo Chat trên máy này để tự kết nối.'; }
   $('status').className = 'card status ' + cls;
   $('resume').classList.toggle('hidden', !s.disabled);
+  $('show').classList.toggle('hidden', !(ctl.length || s.agentTabs));
 
   $('control').classList.toggle('hidden', !ctl.length);
   $('ctlWho').innerHTML = ctl.map(([srv, c]) => `<div><b>${esc(c.agent || 'agent')}</b>${c.machine ? ` @ ${esc(c.machine)}` : ''}<small>${esc(host(srv))} · ${esc(ago(c.since))}</small></div>`).join('');
@@ -104,6 +105,7 @@ chrome.runtime.onMessage.addListener((m) => { if (m?.type === 'state') void refr
 $('gear').onclick = () => { const m = $('manual'); m.classList.toggle('hidden'); $('gear').classList.toggle('on', !m.classList.contains('hidden')); };
 $('stop').onclick = async () => render(await ask({ type: 'stop' }));
 $('resume').onclick = async () => render(await ask({ type: 'toggle' }));
+$('show').onclick = async () => { await ask({ type: 'show_agent' }); window.close(); };
 $('doPairApp').onclick = async () => { const r = await ask({ type: 'pair_local' }); if (r?.error) { $('stSub').textContent = r.error; return; } render(r); };
 $('name').onfocus = () => { editing = true; if (last) renderTag(last); };
 $('name').oninput = () => { if (last) renderTag(last); };

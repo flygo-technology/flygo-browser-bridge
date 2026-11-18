@@ -31,6 +31,7 @@ const tabOwner = new Map();   // tab id -> server url whose agent controls it
 const attaching = new Map();  // tab id -> pending chrome.debugger.attach
 let creatingFor = null;       // server creating a tab right now (its onCreated is not a user tab)
 const agentTabs = new Set();  // tabs created by an agent
+const lastTab = new Map();    // server -> tab its agent used last (popup "Xem agent", browser_tab_show)
 let groupId = null;
 let tickTimer = null;
 let partSeq = 0;
@@ -123,6 +124,18 @@ const secretDeps = {
   changed: () => render(),
 };
 
+/** Bring the tab an agent of this server used last (else any of its tabs) to the front. */
+async function showAgentTab(server) {
+  let id = server ? lastTab.get(server) : [...lastTab.values()].at(-1);
+  const alive = async (t) => t !== undefined && !!(await chrome.tabs.get(t).catch(() => null));
+  if (!(await alive(id))) id = [...tabOwner].find(([, o]) => !server || o === server)?.[0];
+  if (!(await alive(id))) id = [...agentTabs].at(-1);
+  if (!(await alive(id))) return null;
+  const tab = await chrome.tabs.update(id, { active: true });
+  await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+  return id;
+}
+
 async function rpc(server, method, params) {
   switch (method) {
     case 'chrome.debugger.attach': {
@@ -158,6 +171,7 @@ async function rpc(server, method, params) {
     case 'chrome.debugger.sendCommand': {
       const [target, m, p] = params;
       if (tabOwner.get(target.tabId) !== server) throw new Error('Tab không thuộc phiên điều khiển này');
+      lastTab.set(server, target.tabId);
       if (m === 'Input.dispatchMouseEvent' && !target.sessionId) void cursor(target.tabId, p);
       // Playwright's own Fetch interception is merged with our network rules (one debugger session per tab).
       if (!target.sessionId && (m === 'Fetch.enable' || m === 'Fetch.disable')) return net.pwFetch(target.tabId, m, p);
@@ -182,7 +196,23 @@ async function rpc(server, method, params) {
       await chrome.tabs.remove(tabId).catch(() => {});
       return {};
     }
+    case 'flygo.show': {
+      const id = await showAgentTab(server);
+      return id === null ? { ok: false, error: 'Agent chưa có tab nào' } : { ok: true, tab: id };
+    }
     case 'flygo.tabs': {
+      // Background mode: the agent's own tabs (made by an agent earlier, or in the "Flygo AI" group), never the user's tab in view.
+      if (params?.agent_only) {
+        const group = groupId !== null ? await chrome.tabGroups.get(groupId).catch(() => null) : null;
+        const out = [];
+        for (const t of await chrome.tabs.query({})) {
+          if (t.id === undefined || !(agentTabs.has(t.id) || (group && t.groupId === group.id))) continue;
+          const o = tabOwner.get(t.id);
+          if (o && o !== server) continue;
+          out.push({ id: t.id, url: t.url, title: t.title, active: !!t.active, used_by_agent: attached.has(t.id) });
+        }
+        return out;
+      }
       // Tabs this server's agent may use: every debuggable tab not held by another server (active_only: the tab(s) the
       // user is looking at, attached when a session starts; others on demand with browser_tab_attach).
       const out = [];
@@ -664,6 +694,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         for (const s of list) { closeConn(s, 'logout'); delete st.servers[s]; delete st.pairings[s]; st.blocked[s] = true; }
         await save(); render(); return snapshot();
       }
+      case 'show_agent': await showAgentTab(null); return snapshot();
       case 'vault_delete': await vaultDelete(String(msg.origin || '')); return snapshot();
       case 'pair_local': {
         live.localApp = await localApp();

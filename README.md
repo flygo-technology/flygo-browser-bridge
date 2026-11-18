@@ -70,6 +70,14 @@ every message goes over it (frames split at 60k characters) and the WebSocket on
 channel closes, traffic falls back to the WebSocket and the extension retries WebRTC later. Reason: a WebSocket behind a
 CDN/proxy can stall when a heavy page streams megabytes of CDP events. The popup shows each server's path (P2P / WS).
 
+## Background mode (0.10.0)
+
+The agent works in its own tab (one it opened before, or a new inactive tab in the "Flygo AI" group), never in the tab the
+user is looking at unless it asks (`browser_tab_attach`), and nothing is brought to the front. A tab that is not painted
+(background tab, covered or minimised window) never passes Playwright's "stable" check, so the server clicks directly (real
+CDP mouse events at the element's centre, then DOM events inside the page if those do not land). `flygo.tabs {agent_only}`
+lists the agent's tabs; `flygo.show` / the popup's "Xem agent đang làm" bring the agent's tab to the front.
+
 ## Passwords and one-time codes (0.9.0)
 
 The agent never asks for a password in chat. It calls `browser_ask_secret` on the field; the server asks the extension
