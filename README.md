@@ -70,6 +70,13 @@ every message goes over it (frames split at 60k characters) and the WebSocket on
 channel closes, traffic falls back to the WebSocket and the extension retries WebRTC later. Reason: a WebSocket behind a
 CDN/proxy can stall when a heavy page streams megabytes of CDP events. The popup shows each server's path (P2P / WS).
 
+## Large uploads (0.11.0)
+
+`flygo.upload {id, url | path, name}`: the extension downloads `url` on this machine with `chrome.downloads` (the browser's
+cookies apply) or takes `path` (only under `flygo-agent/workspaces`, `Downloads` or `Desktop`), then attaches it by path to the
+`<input type=file>` the server marked (`data-flygo-upload`) with CDP `DOM.setFileInputFiles`. The file's bytes never go
+through the server, so size is not limited.
+
 ## Background mode (0.10.0)
 
 The agent works in its own tab (one it opened before, or a new inactive tab in the "Flygo AI" group), never in the tab the

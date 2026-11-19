@@ -7,6 +7,7 @@
 // agents work in the tabs they opened.
 import { Net, ensureOffscreen } from './net.js';
 import { DECLARED_TOOLS, NET_OPS } from './tools.js';
+import { upload } from './uploads.js';
 import { learnPasswords, learnVault, pendingList, scrub, secretCancel, secretFill, secretRequest, vaultDelete, vaultList } from './secrets.js';
 
 const VERSION = chrome.runtime.getManifest().version;
@@ -227,6 +228,7 @@ async function rpc(server, method, params) {
     case 'tools/call': return await callDeclared(params?.name, params?.arguments || {});
     case 'flygo.secret_request': return await secretRequest(secretDeps, server, params);
     case 'flygo.secret_fill': return await secretFill(secretDeps, server, params);
+    case 'flygo.upload': return await upload(secretDeps, server, params);
     case 'flygo.detachAll': await detachAll(server); return { ok: true };
     case 'flygo.fetch': return await fetchForAgent(params?.url, params?.max_bytes);
     default:
